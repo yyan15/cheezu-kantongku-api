@@ -1,163 +1,149 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\Models\Transaksi;
 use Illuminate\Http\Request;
 
 class TransaksiController extends Controller
 {
-    // ─── GET semua transaksi ─────────────────────────────────
+    /**
+     * Menampilkan semua daftar transaksi khusus milik user yang sedang login.
+     */
     public function index()
     {
-        $transaksi = Transaksi::orderBy('tanggal', 'desc')->get();
+        // Mengambil transaksi yang user_id-nya cocok dengan token yang dikirim Android
+        $transaksi = Transaksi::where('user_id', auth()->id())->latest()->get();
 
         return response()->json([
-            'success' => true,
-            'data'    => $transaksi,
-        ]);
+            'status' => 'success',
+            'data'   => $transaksi
+        ], 200);
     }
 
-    // ─── GET transaksi bulan ini ─────────────────────────────
-    public function bulanIni()
-    {
-        $transaksi = Transaksi::whereMonth('tanggal', now()->month)
-            ->whereYear('tanggal', now()->year)
-            ->orderBy('tanggal', 'desc')
-            ->get();
-
-        $totalPengeluaran = $transaksi->where('tipe', 'pengeluaran')->sum('nominal');
-        $totalPemasukan   = $transaksi->where('tipe', 'pemasukan')->sum('nominal');
-
-        return response()->json([
-            'success'           => true,
-            'data'              => $transaksi,
-            'total_pengeluaran' => $totalPengeluaran,
-            'total_pemasukan'   => $totalPemasukan,
-            'saldo'             => $totalPemasukan - $totalPengeluaran,
-        ]);
-    }
-
-    // ─── POST tambah transaksi ───────────────────────────────
+    /**
+     * Menyimpan data transaksi baru dan otomatis mengaitkannya ke user yang sedang login.
+     */
     public function store(Request $request)
     {
         $request->validate([
-            'judul'    => 'required|string|max:255',
-            'kategori' => 'required|string',
-            'tipe'     => 'required|in:pengeluaran,pemasukan',
-            'nominal'  => 'required|numeric|min:0',
-            'tanggal'  => 'required|date',
-            'catatan'  => 'nullable|string',
+            'nama_transaksi' => 'required|string|max:255',
+            'jumlah'         => 'required|integer|min:1',
+            'jenis'          => 'required|in:pemasukan,pengeluaran',
+            'keterangan'     => 'nullable|string'
         ]);
 
-        $transaksi = Transaksi::create($request->all());
+        try {
+            // Saat proses create, otomatis sisipkan user_id dari auth()
+            $transaksi = Transaksi::create([
+                'user_id'        => auth()->id(),
+                'nama_transaksi' => $request->nama_transaksi,
+                'jumlah'         => $request->jumlah,
+                'jenis'          => $request->jenis,
+                'keterangan'     => $request->keterangan,
+            ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Transaksi berhasil ditambahkan',
-            'data'    => $transaksi,
-        ], 201);
+            return response()->json([
+                'status'  => 'success',
+                'message' => 'Transaksi berhasil ditambahkan',
+                'data'    => $transaksi
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Gagal menambah transaksi: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    // ─── GET detail transaksi by ID ──────────────────────────
+    /**
+     * Menampilkan detail SATU transaksi milik user yang sedang login.
+     */
     public function show($id)
     {
-        $transaksi = Transaksi::find($id);
+        // Cari transaksi berdasarkan ID, tapi pastikan juga itu milik user yang sedang login
+        $transaksi = Transaksi::where('user_id', auth()->id())->find($id);
 
         if (!$transaksi) {
             return response()->json([
-                'success' => false,
-                'message' => 'Transaksi tidak ditemukan',
+                'status'  => 'error',
+                'message' => 'Transaksi tidak ditemukan atau Anda tidak memiliki akses'
             ], 404);
         }
 
         return response()->json([
-            'success' => true,
-            'data'    => $transaksi,
-        ]);
+            'status' => 'success',
+            'data'   => $transaksi
+        ], 200);
     }
 
-    // ─── PUT update transaksi ────────────────────────────────
+    /**
+     * Memperbarui data transaksi milik user yang sedang login.
+     */
     public function update(Request $request, $id)
     {
-        $transaksi = Transaksi::find($id);
+        $transaksi = Transaksi::where('user_id', auth()->id())->find($id);
 
         if (!$transaksi) {
             return response()->json([
-                'success' => false,
-                'message' => 'Transaksi tidak ditemukan',
+                'status'  => 'error',
+                'message' => 'Transaksi tidak ditemukan atau Anda tidak memiliki akses'
             ], 404);
         }
 
         $request->validate([
-            'judul'    => 'sometimes|string|max:255',
-            'kategori' => 'sometimes|string',
-            'tipe'     => 'sometimes|in:pengeluaran,pemasukan',
-            'nominal'  => 'sometimes|numeric|min:0',
-            'tanggal'  => 'sometimes|date',
-            'catatan'  => 'nullable|string',
+            'nama_transaksi' => 'sometimes|required|string|max:255',
+            'jumlah'         => 'sometimes|required|integer|min:1',
+            'jenis'          => 'sometimes|required|in:pemasukan,pengeluaran',
+            'keterangan'     => 'nullable|string'
         ]);
 
-        $transaksi->update($request->all());
+        try {
+            // Hanya memperbarui kolom yang dikirim dari request
+            $transaksi->update($request->all());
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Transaksi berhasil diupdate',
-            'data'    => $transaksi,
-        ]);
+            return response()->json([
+                'status'  => 'success',
+                'message' => 'Transaksi berhasil diperbarui',
+                'data'    => $transaksi
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Gagal memperbarui transaksi: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    // ─── DELETE transaksi ────────────────────────────────────
+    /**
+     * Menghapus transaksi milik user yang sedang login.
+     */
     public function destroy($id)
     {
-        $transaksi = Transaksi::find($id);
+        $transaksi = Transaksi::where('user_id', auth()->id())->find($id);
 
         if (!$transaksi) {
             return response()->json([
-                'success' => false,
-                'message' => 'Transaksi tidak ditemukan',
+                'status'  => 'error',
+                'message' => 'Transaksi tidak ditemukan atau Anda tidak memiliki akses'
             ], 404);
         }
 
-        $transaksi->delete();
+        try {
+            $transaksi->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Transaksi berhasil dihapus',
-        ]);
-    }
+            return response()->json([
+                'status'  => 'success',
+                'message' => 'Transaksi berhasil dihapus'
+            ], 200);
 
-    // ─── GET statistik per kategori ──────────────────────────
-    public function statistik()
-    {
-        $bulan = now()->month;
-        $tahun = now()->year;
-
-        $kategori = Transaksi::where('tipe', 'pengeluaran')
-            ->whereMonth('tanggal', $bulan)
-            ->whereYear('tanggal', $tahun)
-            ->selectRaw('kategori, SUM(nominal) as total')
-            ->groupBy('kategori')
-            ->get();
-
-        return response()->json([
-            'success' => true,
-            'data'    => $kategori,
-        ]);
-    }
-
-    // ─── GET search transaksi ────────────────────────────────
-    public function search(Request $request)
-    {
-        $keyword   = $request->query('q', '');
-        $transaksi = Transaksi::where('judul', 'like', "%{$keyword}%")
-            ->orderBy('tanggal', 'desc')
-            ->get();
-
-        return response()->json([
-            'success' => true,
-            'data'    => $transaksi,
-        ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Gagal menghapus transaksi: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }
